@@ -282,15 +282,15 @@ func Repair(logger log.Logger, dir string, id ulid.ULID, source metadata.SourceT
 
 	chunkw, err := chunks.NewWriter(filepath.Join(resdir, ChunksDirname))
 	if err != nil {
-		return resid, errors.Wrap(err, "open chunk writer")
+		return resid, errors.Wrap(err, "open chunk seriesWriter")
 	}
-	defer runutil.CloseWithErrCapture(&err, chunkw, "repair chunk writer")
+	defer runutil.CloseWithErrCapture(&err, chunkw, "repair chunk seriesWriter")
 
 	indexw, err := index.NewWriter(context.TODO(), filepath.Join(resdir, IndexFilename))
 	if err != nil {
-		return resid, errors.Wrap(err, "open index writer")
+		return resid, errors.Wrap(err, "open index seriesWriter")
 	}
-	defer runutil.CloseWithErrCapture(&err, indexw, "repair index writer")
+	defer runutil.CloseWithErrCapture(&err, indexw, "repair index seriesWriter")
 
 	// TODO(fabxc): adapt so we properly handle the version once we update to an upstream
 	// that has multiple.
@@ -435,9 +435,9 @@ func rewrite(
 		series   = []seriesRepair{}
 	)
 
+	var lset labels.Labels
+	var chks []chunks.Meta
 	for all.Next() {
-		var lset labels.Labels
-		var chks []chunks.Meta
 		id := all.At()
 
 		if err := indexr.Series(id, &lset, &chks); err != nil {

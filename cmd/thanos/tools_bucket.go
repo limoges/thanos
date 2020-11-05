@@ -73,6 +73,7 @@ func registerBucket(app extkingpin.AppClause) {
 	registerBucketReplicate(cmd, objStoreConfig)
 	registerBucketDownsample(cmd, objStoreConfig)
 	registerBucketCleanup(cmd, objStoreConfig)
+	registerBucketRewrite(cmd, objStoreConfig)
 }
 
 func registerBucketVerify(app extkingpin.AppClause, objStoreConfig *extflag.PathOrContent) {
@@ -709,4 +710,61 @@ func compare(s1, s2 string) bool {
 		return s1Duration < s2Duration
 	}
 	return s1Time.Before(s2Time)
+}
+
+func registerBucketRewrite(app extkingpin.AppClause, objStoreConfig *extflag.PathOrContent) {
+	cmd := app.Command(component.Rewrite.String(), "Rewrite chosen blocks in the bucket, while deleting or modifying series. Once rewritten, the old block is marked for deletion."+
+		"NOTE: It's recommended to turn off compactor while doing this operation. If the compactor is running and touching exactly same block that"+
+		"is being rewritten, the resulted rewritten block might only cause overlap (mitigated by marking overlapping block manually for deletion)"+
+		"and the data you wanted to rewrite could already part of bigger block.\n\n"+
+		"Use FILESYSTEM type of bucket to rewrite block on disk (suitable for vanilla Prometheus)"+
+		"WARNING: This procedure is *IRREVERSIBLE* after certain time (delete delay), so do backup your blocks first (you can use objstore.config-backup flags for this command)")
+	blockIDs := cmd.Flag("id", "ID (ULID) of the blocks for rewrite (repeated flag).").Required().Strings()
+	objStoreBackupConfig := extkingpin.RegisterCommonObjStoreFlags(cmd, "-backup", false, "Used for backup-ing block before rewrite if you choose so (only use in non-dry run mode).")
+	dryRun := cmd.Flag("dry-run", "Prints the series changes instead of doing them. Defaults to true, for user to double check. (: Pass --no-dry-run to skip this.").Default("true").Bool()
+	cmd.Setup(func(g *run.Group, logger log.Logger, reg *prometheus.Registry, _ opentracing.Tracer, _ <-chan struct{}, _ bool) error {
+		confContentYaml, err := objStoreConfig.Content()
+		if err != nil {
+			return err
+		}
+
+		bkt, err := client.NewBucket(logger, confContentYaml, reg, component.Rewrite.String())
+		if err != nil {
+			return err
+		}
+
+		var ids []ulid.ULID
+		for _, id := range *blockIDs {
+			u, err := ulid.Parse(id)
+			if err != nil {
+				return errors.Errorf("block.id is not a valid UUID, got: %v", id)
+			}
+			ids = append(ids, u)
+		}
+
+		var backupBkt objstore.InstrumentedBucket
+		if !*dryRun {
+			confContentYaml, err := objStoreBackupConfig.Content()
+			if err != nil {
+				return err
+			}
+
+			backupBkt, err = client.NewBucket(logger, confContentYaml, reg, component.Cleanup.String())
+			if err != nil {
+				return err
+			}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		g.Add(func() error {
+			for _, id := range ids {
+				// Delete series from block & repair.
+			}
+			level.Info(logger).Log("msg", "marking for deletion done", "IDs", strings.Join(*blockIDs, ","))
+			return nil
+		}, func(err error) {
+			cancel()
+		})
+		return nil
+	})
 }
